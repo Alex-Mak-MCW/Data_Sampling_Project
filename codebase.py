@@ -18,6 +18,10 @@ from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import classification_report
 from sklearn.metrics import confusion_matrix
 from sklearn.utils import check_random_state
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.metrics import confusion_matrix, classification_report, roc_auc_score, roc_curve, precision_recall_curve, average_precision_score, auc
+import seaborn as sns
 
 
 def data_transformation(data):
@@ -84,19 +88,96 @@ def data_collection_and_preprocessing():
     processed_df=data_transformation(df)
     return processed_df
 
-def sampling_through_mutual_informatinon(df):
+def find_optimal_num_strata(df, use_features, max_clusters=10):
+    """
+    Find the optimal number of strata based on minimizing the total within-cluster variance.
+
+    :param df: DataFrame with features and target 'y'
+    :param max_clusters: Maximum number of clusters to test
+    :param use_features: Flag to decide whether to use all features or mutual information
+    :return: optimal number of clusters
+    """
     X = df.drop(columns=['y'])  # Features
     y = df['y']                 # Target variable
 
-    # Step 1: Calculate mutual information
-    mi_scores = mutual_info_classif(X, y)
+    # Step 1: Optionally calculate mutual information between features and target
+    mi_scores = mutual_info_classif(X, y, random_state=42)  # Uncomment this if you want to use MI
+    df['mutual_info'] = np.dot(X.values, mi_scores)  # Weighted MI for each row  # Uncomment this if using MI
+
+    best_num_clusters = 1
+    min_variance = np.inf  # Initialize with a large value
+
+    # Step 2: Try different numbers of clusters (strata) and compute the within-stratum variance
+    for n_clusters in range(2, max_clusters + 1):  # Try from 2 to max_clusters
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+
+        if use_features:
+            # Stratify based on all features
+            df['stratum'] = kmeans.fit_predict(X)  # Use all features for stratification
+        else:
+            # Stratify based on mutual information (MI) if desired
+            df['stratum'] = kmeans.fit_predict(df[['mutual_info']])  # Use MI for stratification
+            # pass  # MI-based stratification is commented out
+
+        # Step 3: Calculate the within-cluster variance for the target variable 'y'
+        stratum_variances = df.groupby('stratum')['y'].var()
+        total_variance = stratum_variances.sum()
+
+        print("Stratum="+str(n_clusters)+", total var:", total_variance)
+
+        # If the total variance is lower, update the best number of clusters
+        if total_variance < min_variance:
+            min_variance = total_variance
+            best_num_clusters = n_clusters
+
+    return best_num_clusters
+
+# def allocation(type):
+
+
+#     return ""
+
+
+def sampling_through_mutual_information(df, variant, use_features, max_clusters=10):
+    """
+    Perform stratified undersampling with optional dynamic determination of the number of strata.
+    
+    :param df: DataFrame with features and target 'y'.
+    :param variant: 0 for a fixed number of strata (default 5), 1 for optimal strata determination.
+    :param max_clusters: Maximum number of clusters to test when finding optimal strata.
+    :return: Balanced DataFrame with undersampled majority class.
+    """
+
+    # Step 1: Optionally calculate mutual information
+    X = df.drop(columns=['y'])  # Features
+    y = df['y']                 # Target variable
+
+    mi_scores = mutual_info_classif(X, y, random_state=42)
     df['mutual_info'] = np.dot(X.values, mi_scores)  # Weighted MI for each row    
 
-    # Step 2: Group samples into stratums (e.g., using k-means clustering)
-    kmeans = KMeans(n_clusters=5, random_state=42)  # Adjust number of stratums
+    # Step 2: Determine the number of strata
+    if variant == 1:
+        if use_features==True:
+            # Use find_optimal_num_strata to determine the optimal number of clusters
+            print("optimal strata via all features (variant 1A)")
+            optimal_num_strata = find_optimal_num_strata(df, use_features=True, max_clusters=max_clusters)
+            print(f"Optimal number of strata determined: {optimal_num_strata}")
+        else: 
+            # Use find_optimal_num_strata to determine the optimal number of clusters
+            print("optimal strata via MI (variant 1B)")
+            optimal_num_strata = find_optimal_num_strata(df, use_features=False, max_clusters=max_clusters)
+            print(f"Optimal number of strata determined: {optimal_num_strata}")
+    else:
+        # Use default fixed number of clusters
+        print("default strata (variant 0)")
+        optimal_num_strata = 5
+        print(f"Using fixed number of strata: {optimal_num_strata}")
+
+    # Step 3: Group samples into stratums using KMeans clustering
+    kmeans = KMeans(n_clusters=optimal_num_strata, random_state=42)
     df['stratum'] = kmeans.fit_predict(df[['mutual_info']])
 
-    # Step 3: Perform undersampling through stratified SRS
+    # Step 4: Perform undersampling through stratified SRS
     undersampled_dfs = []
     for stratum, group in df.groupby('stratum'):
         # Separate the majority and minority class in the group
@@ -114,30 +195,33 @@ def sampling_through_mutual_informatinon(df):
         # Combine with the minority class
         undersampled_dfs.append(pd.concat([undersampled_majority, minority]))
 
-    # Step 4: Combine sampled stratums
+    # Step 5: Combine sampled stratums
     final_df = pd.concat(undersampled_dfs)
 
     # Shuffle the resulting dataset
     final_df = final_df.sample(frac=1, random_state=42).reset_index(drop=True)
 
-    # drop unneeded column
+    # Drop unneeded columns
     final_df.drop(columns=['mutual_info', 'stratum'], inplace=True)
 
     return final_df
 
+
 # NOTE: Only put one sampling function at a time
-def sampling(input):
+def sampling(df):
     # undersample through maximizing MI 
-    output=sampling_through_mutual_informatinon(input)
+
+    # default number of strata--> 5
+    # output=sampling_through_mutual_information(df, use_features=True, variant=0)
+    # output=sampling_through_mutual_information(df, use_features=False, variant=0)
+
+    # optimal number of strata (via all features)
+    # output=sampling_through_mutual_information(df, use_features=True, variant=1)
+    output=sampling_through_mutual_information(df, use_features=False, variant=1)
 
     # ADD YOUR WAY TO RESAMPLE THE DATA...
 
     return output
-
-import matplotlib.pyplot as plt
-import numpy as np
-from sklearn.metrics import confusion_matrix, classification_report, roc_auc_score, roc_curve, precision_recall_curve, average_precision_score, auc
-import seaborn as sns
 
 def evaluate_model(y_true, y_pred):
     """
@@ -215,25 +299,21 @@ def evaluate_model(y_true, y_pred):
     plt.show()
 
 
-
-
-
 def classification_and_evaluation(df):
     X = df.drop(columns=['y'])  # Features
     y = df['y']   
 
     # set random seed for code reproducability
-    random_state=check_random_state(42)
 
     # 1. data splitting into train-test-validation split (80-10-10)
     # first split train as 80%, rest 20%
-    X_train, X_test, y_train, y_test=train_test_split(X,y,test_size=0.2,random_state=random_state)
+    X_train, X_test, y_train, y_test=train_test_split(X,y,test_size=0.2,random_state=42)
 
     # # split the remaining 20% by half (10% test, 10% validation)
     # X_val, X_test, y_val, y_test=train_test_split(X_test,y_test,test_size=0.5,random_state=7)
 
     # 2. train and fit a decision tree model using the training data
-    RF = RandomForestClassifier()
+    RF = RandomForestClassifier(random_state=42)
     RF.fit(X_train, y_train)
 
     # 2.1 make predictions on the testing data based on the pre-tuned model fitted with training data
@@ -256,10 +336,10 @@ def main():
     # step 2: sampling 
     resampled_data=sampling(data)
     
-    # step 3: do classification (and prediction)
+    # # step 3: do classification (and prediction)
 
-    # first do classiciation in baseline 
-    classification_and_evaluation(pd.read_csv("https://raw.githubusercontent.com/Alex-Mak-MCW/Data_Sampling_Project/refs/heads/main/Processed_Input.csv"))
+    # # first do classiciation in baseline 
+    # classification_and_evaluation(pd.read_csv("https://raw.githubusercontent.com/Alex-Mak-MCW/Data_Sampling_Project/refs/heads/main/Processed_Input.csv"))
     # then do classification with the MI approach
     classification_and_evaluation(resampled_data)
     
