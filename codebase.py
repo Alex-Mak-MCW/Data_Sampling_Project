@@ -132,13 +132,150 @@ def find_optimal_num_strata(df, use_features, max_clusters=10):
 
     return best_num_clusters
 
-# def allocation(type):
+def allocation_function(df, variant):
+    # Neyman Allocation
+    if variant=="Neyman":
+        print("Neyman Allocation")
+        # Step 4: Perform undersampling with Neyman allocation
+        undersampled_dfs = []
+        total_minority_samples = len(df[df['y'] == 1])
+
+        # Calculate total variance-weighted size
+        stratum_stats = df.groupby('stratum').agg(
+            N=('y', 'size'),
+            S=('y', 'std')
+        ).dropna()
+
+        stratum_stats['weighted'] = stratum_stats['N'] * stratum_stats['S']
+        total_weight = stratum_stats['weighted'].sum()
+
+        print(total_minority_samples)
+        print(stratum_stats['weighted'])
+        print(total_weight)
+
+        # Neyman allocation for each stratum
+        stratum_stats['sample_size'] = (
+            total_minority_samples * stratum_stats['weighted'] / total_weight
+        ).astype(int)
+
+        print(stratum_stats['sample_size'])
+
+        # Apply undersampling per stratum
+        for stratum, group in df.groupby('stratum'):
+            majority = group[group['y'] == 0]
+            minority = group[group['y'] == 1]
+
+            # Neyman allocated sample size for majority class
+            n_samples = stratum_stats.loc[stratum, 'sample_size']
+
+            # print(n_samples)
+
+            # Undersample the majority class
+            undersampled_majority = resample(
+                majority,
+                replace=False,
+                n_samples=min(n_samples, len(majority)),  # Handle cases where n_samples > available
+                random_state=42
+            )
+
+            # Combine with the minority class
+            undersampled_dfs.append(pd.concat([undersampled_majority, minority]))
+
+    # Optimal Allocation
+    elif variant=="Optimal":
+        print("Optimal Allocation")
+        # Step 4: Perform undersampling with optimal allocation
+        undersampled_dfs = []
+        total_minority_samples = len(df[df['y'] == 1])
+
+        # Step 4.1: Calculate statistics and cost-adjusted weights
+        stratum_stats = df.groupby('stratum').agg(
+            N=('y', 'size'),
+            S=('y', 'std')
+        ).dropna()
+
+        factor=5
+
+        # Define non-uniform cost (penalize larger strata)
+        stratum_stats = stratum_stats.sort_values(by='N')
+        stratum_stats['C'] = factor ** (stratum_stats.index.to_series().rank() - 1)  # Costs: 1, 10, 100, ...
+
+        stratum_stats['weighted'] = stratum_stats['N'] * stratum_stats['S'] / stratum_stats['C']
+        total_weight = stratum_stats['weighted'].sum()
+
+        # Calculate optimal allocation sample sizes
+        stratum_stats['sample_size'] = (
+            total_minority_samples * stratum_stats['weighted'] / total_weight
+        ).astype(int)
+
+        # Step 4.2: Apply undersampling per stratum
+        for stratum, group in df.groupby('stratum'):
+            majority = group[group['y'] == 0]
+            minority = group[group['y'] == 1]
+
+            # Include all minority class samples
+            n_samples_minority = len(minority)
+
+            # Check if there are no minority class samples
+            if n_samples_minority == 0:
+                # If no minority class, do regular resampling for majority class
+                n_samples_majority = stratum_stats.loc[stratum, 'sample_size']
+                
+                # Regular resampling from the majority class
+                undersampled_majority = resample(
+                    majority,
+                    replace=False,
+                    n_samples=n_samples_majority,  # Regular sample size for majority class
+                    random_state=42
+                )
+
+                # Add only the resampled majority class (since there are no minority class samples)
+                undersampled_dfs.append(undersampled_majority)
+            else:
+                # Otherwise, perform undersampling with optimal allocation
+                n_samples_majority = stratum_stats.loc[stratum, 'sample_size']
+
+                # If n_samples_majority becomes 0, we can either skip the stratum or handle it differently
+                if n_samples_majority > 0:
+                    # Undersample the majority class
+                    undersampled_majority = resample(
+                        majority,
+                        replace=False,
+                        n_samples=min(n_samples_majority, len(majority)),  # Handle cases where n_samples > available
+                        random_state=42
+                    )
+
+                    # Combine all minority samples with the undersampled majority class
+                    undersampled_dfs.append(pd.concat([undersampled_majority, minority]))
+                else:
+                    # Handle case where n_samples_majority == 0 (e.g., skip or add all available samples)
+                    undersampled_dfs.append(minority)  # Just append the minority class samples
+
+    # other allocation technique: assume no allocation
+    else:
+        print("NO Allocation")
+        # Step 4: Perform undersampling through stratified SRS
+        undersampled_dfs = []
+        for stratum, group in df.groupby('stratum'):
+            # Separate the majority and minority class in the group
+            majority = group[group['y'] == 0]
+            minority = group[group['y'] == 1]
+            
+            # Undersample the majority class
+            undersampled_majority = resample(
+                majority,
+                replace=False,
+                n_samples=len(minority),  # Match minority class size
+                random_state=42
+            )
+            
+            # Combine with the minority class
+            undersampled_dfs.append(pd.concat([undersampled_majority, minority]))
+        
+    return undersampled_dfs
 
 
-#     return ""
-
-
-def sampling_through_mutual_information(df, variant, use_features, max_clusters=10):
+def sampling_through_mutual_information(df, num_strata_fixed, use_features, allocation, max_clusters=10):
     """
     Perform stratified undersampling with optional dynamic determination of the number of strata.
     
@@ -148,6 +285,7 @@ def sampling_through_mutual_information(df, variant, use_features, max_clusters=
     :return: Balanced DataFrame with undersampled majority class.
     """
 
+
     # Step 1: Optionally calculate mutual information
     X = df.drop(columns=['y'])  # Features
     y = df['y']                 # Target variable
@@ -156,7 +294,8 @@ def sampling_through_mutual_information(df, variant, use_features, max_clusters=
     df['mutual_info'] = np.dot(X.values, mi_scores)  # Weighted MI for each row    
 
     # Step 2: Determine the number of strata
-    if variant == 1:
+    if not num_strata_fixed:
+        print("NON-FIXED strata")
         if use_features==True:
             # Use find_optimal_num_strata to determine the optimal number of clusters
             print("optimal strata via all features (variant 1A)")
@@ -169,7 +308,7 @@ def sampling_through_mutual_information(df, variant, use_features, max_clusters=
             print(f"Optimal number of strata determined: {optimal_num_strata}")
     else:
         # Use default fixed number of clusters
-        print("default strata (variant 0)")
+        print("FIXED strata")
         optimal_num_strata = 5
         print(f"Using fixed number of strata: {optimal_num_strata}")
 
@@ -177,23 +316,8 @@ def sampling_through_mutual_information(df, variant, use_features, max_clusters=
     kmeans = KMeans(n_clusters=optimal_num_strata, random_state=42)
     df['stratum'] = kmeans.fit_predict(df[['mutual_info']])
 
-    # Step 4: Perform undersampling through stratified SRS
-    undersampled_dfs = []
-    for stratum, group in df.groupby('stratum'):
-        # Separate the majority and minority class in the group
-        majority = group[group['y'] == 0]
-        minority = group[group['y'] == 1]
-        
-        # Undersample the majority class
-        undersampled_majority = resample(
-            majority,
-            replace=False,
-            n_samples=len(minority),  # Match minority class size
-            random_state=42
-        )
-        
-        # Combine with the minority class
-        undersampled_dfs.append(pd.concat([undersampled_majority, minority]))
+    # Step 4: Perform undersampling through stratified SRS (within an allocation function)
+    undersampled_dfs=allocation_function(df, variant=allocation) 
 
     # Step 5: Combine sampled stratums
     final_df = pd.concat(undersampled_dfs)
@@ -204,12 +328,24 @@ def sampling_through_mutual_information(df, variant, use_features, max_clusters=
     # Drop unneeded columns
     final_df.drop(columns=['mutual_info', 'stratum'], inplace=True)
 
+    print(final_df['y'].value_counts())
+
     return final_df
 
 
 # NOTE: Only put one sampling function at a time
 def sampling(df):
-    # undersample through maximizing MI 
+    """
+    Undersample through maximizing mutual information: (3 parameters 12 VARIANTS)
+
+    parameter 1: num_strata_fixed; is the number of strata fixed or not (2 values: True/ False)
+    parameter 2: use_features; either use the data's features or mutual information to determine the number of strata IF num_strata_fixed is true (2 values: True/False)
+    parameter 3: allocation; the allocation type use to sample data from each stratum (3 values: 'Neyman', 'Optimal', None)
+    """
+
+
+
+    # variant is th
 
     # default number of strata--> 5
     # output=sampling_through_mutual_information(df, use_features=True, variant=0)
@@ -217,7 +353,11 @@ def sampling(df):
 
     # optimal number of strata (via all features)
     # output=sampling_through_mutual_information(df, use_features=True, variant=1)
-    output=sampling_through_mutual_information(df, use_features=False, variant=1)
+
+    # allocation_type="Optimal"
+
+    output=sampling_through_mutual_information(df, num_strata_fixed=False, use_features=False, allocation=" ")
+    # output=sampling_through_mutual_information(df, use_features=False, allocation="Neyman", variant=1)
 
     # ADD YOUR WAY TO RESAMPLE THE DATA...
 
@@ -250,15 +390,6 @@ def evaluate_model(y_true, y_pred):
     # Classification Report
     print("\nClassification Report:")
     print(classification_report(y_true, y_pred_labels))
-
-    # # Class-wise Performance Metrics
-    # print("\nClass-wise Performance Metrics:")
-    # for class_label in range(cm.shape[0]):
-    #     tp = cm[class_label, class_label]
-    #     fn = cm[class_label].sum() - tp
-    #     fp = cm[:, class_label].sum() - tp
-    #     tn = cm.sum() - (tp + fn + fp)
-    #     print(f"Class {class_label} -> TP: {tp}, FN: {fn}, FP: {fp}, TN: {tn}")
 
     # Class-wise Performance Metrics
     classification_report_2 = classification_report(y_true, y_pred_labels, output_dict=True)
@@ -332,6 +463,8 @@ def main():
     # data=data_collection_and_preprocessing()
     # option 2: load the processed data file from github repo
     data=pd.read_csv("https://raw.githubusercontent.com/Alex-Mak-MCW/Data_Sampling_Project/refs/heads/main/Processed_Input.csv")
+
+    print(data['y'].value_counts())
 
     # step 2: sampling 
     resampled_data=sampling(data)
