@@ -428,9 +428,20 @@ def evaluate_model(y_true, y_pred):
     plt.title("Precision-Recall Curve")
     plt.legend(loc="lower left")
     plt.show()
+    
+from imblearn.under_sampling import RandomUnderSampler, NearMiss, TomekLinks
+def baseline_testing(df):
+
+    # first do classiciation in baseline (data without resample)
+    classification_and_evaluation(df)
+
+    # baseline testing on 3 undersampling techniques (random undersampling, NearMiss, TomekLinks)
+    classification_and_evaluation(df, baseline="R")
+    classification_and_evaluation(df, baseline="N")
+    classification_and_evaluation(df, baseline="T")
 
 
-def classification_and_evaluation(df):
+def classification_and_evaluation(df, baseline=None):
     X = df.drop(columns=['y'])  # Features
     y = df['y']   
 
@@ -439,9 +450,41 @@ def classification_and_evaluation(df):
     # 1. data splitting into train-test-validation split (80-10-10)
     # first split train as 80%, rest 20%
     X_train, X_test, y_train, y_test=train_test_split(X,y,test_size=0.2,random_state=42)
+    print(X_train.shape)
 
     # # split the remaining 20% by half (10% test, 10% validation)
     # X_val, X_test, y_val, y_test=train_test_split(X_test,y_test,test_size=0.5,random_state=7)
+
+# specifically for baseline
+    if baseline:
+        print("BASELINE!")
+
+        # For Random undersampling
+        if baseline[0]=='R':
+            # Initialize RandomUnderSampler
+            rus = RandomUnderSampler(random_state=42)
+            # Apply random undersampling
+            X_train, y_train = rus.fit_resample(X_train, y_train)
+            print(X_train.shape)
+
+        # For NearMiss
+        elif baseline[0]=='N':
+            # Initialize NearMiss
+            nm = NearMiss(version=1)  # You can experiment with version=2 or 3 for different strategies
+
+            # Apply NearMiss undersampling
+            X_train, y_train = nm.fit_resample(X_train, y_train)
+            print(X_train.shape)
+        
+        # For Tomek Links
+        elif baseline[0]=='T':
+            # Initialize TomekLinks
+            tl = TomekLinks()
+
+            # Apply Tomek Links undersampling
+            X_train, y_train = tl.fit_resample(X_train, y_train)
+            print(X_train.shape)
+
 
     # 2. train and fit a decision tree model using the training data
     RF = RandomForestClassifier(random_state=42)
@@ -457,12 +500,20 @@ def classification_and_evaluation(df):
 
 
 def main():
+
+    baseline_data_path="https://raw.githubusercontent.com/Alex-Mak-MCW/Data_Sampling_Project/refs/heads/main/Processed_Input.csv"
+
+    # baseline testing
+    baseline_testing(pd.read_csv(baseline_data_path))
+
+
+    # EXPERIMENT STARTS
     # Step 1 of the project: data collection and preprocessing (CHOOSE ONE OF THE 2)
 
     # option 1: start from the beginning
     # data=data_collection_and_preprocessing()
     # option 2: load the processed data file from github repo
-    data=pd.read_csv("https://raw.githubusercontent.com/Alex-Mak-MCW/Data_Sampling_Project/refs/heads/main/Processed_Input.csv")
+    data=pd.read_csv(baseline_data_path)
 
     print(data['y'].value_counts())
 
@@ -471,11 +522,9 @@ def main():
     
     # # step 3: do classification (and prediction)
 
-    # # first do classiciation in baseline 
-    # classification_and_evaluation(pd.read_csv("https://raw.githubusercontent.com/Alex-Mak-MCW/Data_Sampling_Project/refs/heads/main/Processed_Input.csv"))
+    # baseline function
+
     # then do classification with the MI approach
     classification_and_evaluation(resampled_data)
-    
+
 main()
-
-
