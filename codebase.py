@@ -173,7 +173,8 @@ def allocation_function(df, variant):
             # Undersample the majority class
             undersampled_majority = resample(
                 majority,
-                replace=False,
+                # replace=False,
+                replace=True,
                 n_samples=min(n_samples, len(majority)),  # Handle cases where n_samples > available
                 random_state=42
             )
@@ -224,7 +225,8 @@ def allocation_function(df, variant):
                 # Regular resampling from the majority class
                 undersampled_majority = resample(
                     majority,
-                    replace=False,
+                    # replace=False,
+                    replace=True,
                     n_samples=n_samples_majority,  # Regular sample size for majority class
                     random_state=42
                 )
@@ -240,7 +242,8 @@ def allocation_function(df, variant):
                     # Undersample the majority class
                     undersampled_majority = resample(
                         majority,
-                        replace=False,
+                        # replace=False,
+                        replace=True,
                         n_samples=min(n_samples_majority, len(majority)),  # Handle cases where n_samples > available
                         random_state=42
                     )
@@ -264,7 +267,8 @@ def allocation_function(df, variant):
             # Undersample the majority class
             undersampled_majority = resample(
                 majority,
-                replace=False,
+                # replace=False,
+                replace=True,
                 n_samples=len(minority),  # Match minority class size
                 random_state=42
             )
@@ -343,23 +347,16 @@ def sampling(df):
     parameter 3: allocation; the allocation type use to sample data from each stratum (3 values: 'Neyman', 'Optimal', None)
     """
 
-
-
-    # variant is th
-
-    # default number of strata--> 5
-    # output=sampling_through_mutual_information(df, use_features=True, variant=0)
-    # output=sampling_through_mutual_information(df, use_features=False, variant=0)
-
-    # optimal number of strata (via all features)
-    # output=sampling_through_mutual_information(df, use_features=True, variant=1)
-
-    # allocation_type="Optimal"
-
+    # Alex 
     output=sampling_through_mutual_information(df, num_strata_fixed=False, use_features=False, allocation=" ")
-    # output=sampling_through_mutual_information(df, use_features=False, allocation="Neyman", variant=1)
 
     # ADD YOUR WAY TO RESAMPLE THE DATA...
+
+    # # Shubham
+    # output=sampling_through_support_point()
+
+    # # Yolanda 
+    # output=sampling_through_principal_point()
 
     return output
 
@@ -498,31 +495,86 @@ def classification_and_evaluation(df, baseline=None):
     # print evaluation
     evaluate_model(y_test, RF_y_train_pred)
 
+from ucimlrepo import fetch_ucirepo 
+from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
+def preprocess_breast_cancer_data():
+    # fetch dataset 
+    breast_cancer = fetch_ucirepo(id=14) 
+    
+    # data (as pandas dataframes) 
+    X = breast_cancer.data.features 
+    y = breast_cancer.data.targets 
 
+    df = pd.concat([X, y], axis=1)
+
+    # rename values for inv-nodes and tumor-size
+    df['inv-nodes']=df['inv-nodes'].replace({'5-Mar':'3-5', '8-Jun':'6-8', '11-Sep':'9-11', '14-Dec':'12-14'})
+    df['tumor-size']=df['tumor-size'].replace({'14-Oct':'10-14', '9-May':'5-9'})
+
+    # handle null data
+    df = df.fillna(df.mode().iloc[0])
+
+    # drop duplciates
+    df = df.drop_duplicates() # dropped 14 (286 to 272)
+
+
+    # Data transfromation
+    label_encoder=LabelEncoder()
+
+    df_copy=df.copy()
+
+    alist=['irradiat','node-caps', 'Class']
+    for i in alist:
+        df_copy[i]=label_encoder.fit_transform(df_copy[i])
+
+    # ordinal for menopause, can try the range ones
+    df_copy['menopause']=df_copy['menopause'].map({"lt40": 0, "ge40": 1, "premeno": 2})
+    df_copy['tumor-size']=df_copy['tumor-size'].map({"0-4": 0, "5-9": 1, "10-14": 2, "15-19": 3, "20-24": 4, "25-29": 5, "30-34": 6, "35-39": 7, "40-44": 8, "45-49": 9, "50-54": 10, "55-59": 11})
+    df_copy['inv-nodes']=df_copy['inv-nodes'].map({"0-2": 0, "3-5": 1, "6-8": 2, "9-11": 3, "12-14": 4, "15-17": 5, "18-20": 6, "21-23": 7, "24-26": 8, "27-29": 9, "30-32": 10, "33-35": 11, "36-39": 12})
+    df_copy['age']=df_copy['age'].map({"10-19": 0, "20-29": 1, "30-39": 2, "40-49": 3, "50-59": 4, "60-69": 5, "70-79": 6, "80-89": 7, "90-99": 8})
+
+    df=pd.get_dummies(df_copy, columns=['breast', 'breast-quad'])
+
+    df.rename(columns={'Class':'y'}, inplace=True)
+    # print(df.columns)
+
+    return df
+
+
+# MAIN FUNCTION
 def main():
+
+    # BREAST CANCER DATA PART STARTS------------------------
+    breast_cancer_data_path="https://raw.githubusercontent.com/Alex-Mak-MCW/Data_Sampling_Project/refs/heads/main/processed_breast_cancer_data.csv"
+
+    # option 1: start from the beginning
+    # breast_cancer_data=preprocess_breast_cancer_data()
+    # option 2: load the processed data file from github repo (USE THIS OPTION)
+    # breast_cancer_data=pd.read_csv("https://raw.githubusercontent.com/Alex-Mak-MCW/Data_Sampling_Project/refs/heads/main/processed_breast_cancer_data.csv")
+    # ONCE LOADED, JUST APPLY data same as below
+
+    # BREAST CANCER DATA PART ENDS---------------------------
+
 
     baseline_data_path="https://raw.githubusercontent.com/Alex-Mak-MCW/Data_Sampling_Project/refs/heads/main/Processed_Input.csv"
 
     # baseline testing
     baseline_testing(pd.read_csv(baseline_data_path))
 
-
     # EXPERIMENT STARTS
     # Step 1 of the project: data collection and preprocessing (CHOOSE ONE OF THE 2)
 
     # option 1: start from the beginning
     # data=data_collection_and_preprocessing()
-    # option 2: load the processed data file from github repo
+    # option 2: load the processed data file from github repo (USE THIS OPTION)
     data=pd.read_csv(baseline_data_path)
 
     print(data['y'].value_counts())
 
-    # step 2: sampling 
+    # step 2: sampling (ONLY DIFFERENCE)
     resampled_data=sampling(data)
     
     # # step 3: do classification (and prediction)
-
-    # baseline function
 
     # then do classification with the MI approach
     classification_and_evaluation(resampled_data)
